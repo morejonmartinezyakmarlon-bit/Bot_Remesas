@@ -731,7 +731,7 @@ async def callback_handler(event):
             await safe_answer("Ingresa tu nombre.")
         return
 
-    # Nuevo: Actualizar porcentaje (solo admin)
+    # Actualizar porcentaje (solo admin)
     if data == "update_percent":
         es_admin, _ = await verificar_admin(user_id)
         if not es_admin:
@@ -1011,18 +1011,107 @@ async def callback_handler(event):
 
     # ---------- Acciones de administrador (remesas) ----------
     if data == "admin_view_remesas":
-        remesas = await listar_remesas()
-        if not remesas:
-            await safe_answer("No hay remesas registradas.", alert=True)
-            await event.edit("📭 No hay remesas.")
+        es_admin, _ = await verificar_admin(user_id)
+        if not es_admin:
+            await safe_answer("⛔ No eres administrador.", alert=True)
             return
-        remesas_pendientes = [r for r in remesas if r.get("enabled") is False]
-        if not remesas_pendientes:
-            await safe_answer("No hay remesas pendientes de confirmar.", alert=True)
-            await event.edit("📭 No hay remesas pendientes.")
+        # Mostrar filtros de fechas para el historial de todos los usuarios
+        user_states[user_id] = {"action": "admin_history_filters"}
+        botones_filtros = [
+            [Button.inline("📅 Hoy", data="admin_history_today"),
+             Button.inline("📅 7 días", data="admin_history_7d")],
+            [Button.inline("📅 30 días", data="admin_history_30d"),
+             Button.inline("📅 60 días", data="admin_history_60d")],
+            [Button.inline("🔙 Volver al menú", data="admin_history_back")]
+        ]
+        await event.edit("📆 **Selecciona el período para ver el historial de remesas de todos los usuarios:**", buttons=botones_filtros)
+        await safe_answer("Elige un filtro de fecha.")
+        return
+
+    # Filtros de historial para admin
+    if data.startswith("admin_history_"):
+        filtro = data.replace("admin_history_", "")
+        if filtro == "back":
+            # Volver al menú de admin de remesas
+            botones = [
+                [Button.inline("➕ Crear remesa", data="admin_create_remesa"),
+                 Button.inline("✏️ Actualizar remesa", data="admin_update_remesa")],
+                [Button.inline("👁️ Ver remesas", data="admin_view_remesas"),
+                 Button.inline("💰 Ver salario", data="admin_view_salary")]
+            ]
+            await event.edit("📦 **Gestión de remesas y salarios**\nSelecciona una acción:", buttons=botones)
+            await safe_answer("Volviendo al menú.")
             return
-        await mostrar_remesas(event, remesas_pendientes, titulo="📋 **Remesas pendientes de confirmar:**")
+
+        es_admin, _ = await verificar_admin(user_id)
+        if not es_admin:
+            await safe_answer("⛔ No eres administrador.", alert=True)
+            return
+
+        now = datetime.now(timezone.utc)
+        if filtro == "today":
+            start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        elif filtro == "7d":
+            start_date = now - timedelta(days=7)
+        elif filtro == "30d":
+            start_date = now - timedelta(days=30)
+        elif filtro == "60d":
+            start_date = now - timedelta(days=60)
+        else:
+            await safe_answer("Filtro no válido.", alert=True)
+            return
+
+        # Obtener todos los usuarios
+        usuarios = await listar_usuarios()
+        if not usuarios:
+            await event.edit("❌ No se pudo obtener la lista de usuarios.")
+            return
+
+        # Recolectar todas las remesas del historial de cada usuario
+        all_remittances = []
+        for user_data in usuarios:
+            user_uuid = user_data.get("id")
+            user_name = user_data.get("name", "Usuario")
+            if not user_uuid:
+                continue
+            history = await listar_history_remittances(user_uuid)
+            if not history:
+                continue
+            for h in history:
+                created_at = datetime.fromisoformat(h["createdAt"].replace("Z", "+00:00"))
+                if created_at >= start_date:
+                    all_remittances.append({
+                        "user_name": user_name,
+                        "customer": h.get("customer", "?"),
+                        "amount": h.get("amount"),
+                        "account": h.get("account", "?"),
+                        "amountPay": h.get("amountPay"),
+                        "createdAt": h.get("createdAt")
+                    })
+        if not all_remittances:
+            await event.edit(f"📭 No hay remesas en el período seleccionado ({filtro}).")
+            return
+
+        # Ordenar por fecha descendente
+        all_remittances.sort(key=lambda x: x["createdAt"], reverse=True)
+
+        mensaje = f"📊 **Remesas de todos los usuarios - {filtro.upper()}**\n\n"
+        for idx, r in enumerate(all_remittances[:30], 1):  # límite 30 para no saturar
+            mensaje += (
+                f"**{idx}.** Usuario: {r['user_name']}\n"
+                f"   Cliente: {r['customer']}\n"
+                f"   Monto: {r['amount']}\n"
+                f"   Cuenta: {r['account']}\n"
+                f"   Salario: {r['amountPay']}\n"
+                f"   Fecha: {r['createdAt'][:10]}\n\n"
+            )
+        if len(all_remittances) > 30:
+            mensaje += "_Mostrando solo las primeras 30 remesas._"
+
+        botones_volver = [[Button.inline("🔙 Volver a filtros", data="admin_view_remesas")]]
+        await client.send_message(user_id, mensaje, buttons=botones_volver)
         await event.delete()
+        await safe_answer("Resultados enviados.")
         return
 
     if data == "admin_view_salary":
