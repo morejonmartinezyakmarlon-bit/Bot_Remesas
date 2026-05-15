@@ -208,16 +208,12 @@ async def actualizar_remesa(remesa_id: str, amount: float, url_image: str, addre
     except Exception as e:
         return False, f"❌ Error de conexión: {e}"
 
-# NUEVA FUNCIÓN: Solo para confirmar remesa (envía únicamente id, adminId y enabled)
 async def confirmar_remesa(remesa_id: str, admin_id: str):
     url = f"{BASE_URL}/api/Remittance"
     payload = {
         "id": remesa_id,
         "adminId": admin_id,
-        "amount": None,
-        "urlImage": None,
-        "address": None,
-        "userId": None
+        "enabled": True
     }
     try:
         async with aiohttp.ClientSession() as session:
@@ -413,7 +409,7 @@ async def crear_history_remittance(user_id: str, account: str, amount: float, cu
         return False, f"❌ Error de conexión al registrar historial: {e}"
 
 # --------------------------------------------------------------
-# Funciones auxiliares para mostrar remesas y cuentas (sin cambios)
+# Funciones auxiliares para mostrar remesas y cuentas
 # --------------------------------------------------------------
 async def mostrar_remesas(event, remesas, titulo="📋 **Lista de remesas:**"):
     if not remesas:
@@ -453,7 +449,7 @@ async def mostrar_cuentas(event, cuentas, titulo="🏦 **Lista de cuentas:**"):
         await event.reply(mensaje)
 
 # --------------------------------------------------------------
-# Handlers de comandos (sin cambios)
+# Handlers de comandos
 # --------------------------------------------------------------
 @client.on(events.NewMessage(pattern='/start'))
 async def start_handler(event):
@@ -464,9 +460,14 @@ async def start_handler(event):
 
 @client.on(events.NewMessage(pattern='/user'))
 async def user_handler(event):
+    user_id = event.sender_id
+    es_admin, _ = await verificar_admin(user_id)
+    if not es_admin:
+        await event.reply("⛔ Solo administradores pueden acceder a este comando.")
+        return
     botones = [
         [Button.inline("✨ Crear usuario", data="createuser"),
-         Button.inline("📝 Actualizar mis datos", data="updateuser")],
+         Button.inline("📝 Actualizar porcentaje", data="update_percent_user")],
         [Button.inline("🗑️ Eliminar usuario", data="deleteuser"),
          Button.inline("👁️ Ver usuarios", data="viewuser")]
     ]
@@ -516,7 +517,7 @@ async def cuentas_handler(event):
     await event.respond("🏦 **Gestión de cuentas**\nSelecciona una acción:", buttons=botones)
 
 # --------------------------------------------------------------
-# Callback principal (sin cambios, solo las URLs ya están actualizadas)
+# Callback principal
 # --------------------------------------------------------------
 @client.on(events.CallbackQuery)
 async def callback_handler(event):
@@ -718,23 +719,36 @@ async def callback_handler(event):
         await event.edit("📝 **Crear nuevo usuario**\n\nEnvía el **nombre**:")
         await safe_answer("Ingresa el nombre.")
         return
-    elif data == "updateuser":
+
+    elif data == "update_percent_user":
+        es_admin, _ = await verificar_admin(user_id)
+        if not es_admin:
+            await safe_answer("⛔ Solo administradores pueden actualizar porcentajes.", alert=True)
+            return
         usuarios = await listar_usuarios()
         if not usuarios:
-            await safe_answer("❌ No se pudo obtener la lista.", alert=True)
+            await safe_answer("❌ No hay usuarios registrados.", alert=True)
             return
-        usuario_encontrado = None
+        botones_usuarios = []
         for u in usuarios:
-            if u.get("idUserTelegram") == user_id:
-                usuario_encontrado = u
-                break
-        if not usuario_encontrado:
-            await safe_answer("❌ No se encontró usuario asociado a tu Telegram.", alert=True)
-            return
-        user_states[user_id] = {"action": "update", "step": "awaiting_new_name", "user_uuid": usuario_encontrado["id"]}
-        await event.edit("✏️ **Actualizar mis datos**\n\nEnvía el **nuevo nombre**:")
-        await safe_answer("Ingresa el nuevo nombre.")
+            nombre = u.get("name", "Sin nombre")
+            uid = u.get("id")
+            botones_usuarios.append([Button.inline(f"👤 {nombre}", data=f"select_user_percent_{uid}")])
+        await event.edit("Selecciona el usuario para actualizar su porcentaje:", buttons=botones_usuarios)
+        await safe_answer("Selecciona un usuario.")
         return
+
+    elif data.startswith("select_user_percent_"):
+        user_uuid = data.replace("select_user_percent_", "")
+        es_admin, _ = await verificar_admin(user_id)
+        if not es_admin:
+            await safe_answer("⛔ Solo administradores pueden actualizar porcentajes.", alert=True)
+            return
+        user_states[user_id] = {"action": "update_percent", "step": "awaiting_percent", "target_user_uuid": user_uuid}
+        await event.edit("📝 **Actualizar porcentaje**\n\nEnvía el **nuevo porcentaje** (puede ser decimal, ej: 2.5):")
+        await safe_answer("Ingresa el nuevo porcentaje.")
+        return
+
     elif data == "deleteuser":
         es_admin, _ = await verificar_admin(user_id)
         if not es_admin:
@@ -752,6 +766,7 @@ async def callback_handler(event):
         await event.edit("Selecciona el usuario a eliminar:", buttons=botones)
         await safe_answer("Selecciona un usuario.")
         return
+
     elif data == "viewuser":
         es_admin, _ = await verificar_admin(user_id)
         if es_admin:
@@ -1036,7 +1051,7 @@ async def callback_handler(event):
         await safe_answer("Remesas pendientes mostradas.")
         return
 
-    # ---------- CONFIRMAR REMESA (CORREGIDO) ----------
+    # ---------- CONFIRMAR REMESA ----------
     if data.startswith("confirm_update_remesa_"):
         remesa_id = data.replace("confirm_update_remesa_", "")
         es_admin, admin_uuid = await verificar_admin(user_id)
@@ -1044,7 +1059,6 @@ async def callback_handler(event):
             await safe_answer("⛔ No eres administrador.", alert=True)
             return
 
-        # Obtener datos completos de la remesa para notificar al usuario y actualizar saldo
         remesas = await listar_remesas()
         remesa = None
         for r in remesas:
@@ -1062,11 +1076,9 @@ async def callback_handler(event):
         customer = remesa.get("customer", "")
         account_id_remesa = remesa.get("accountId")
 
-        # Confirmar la remesa (solo id, adminId, enabled)
         exito, mensaje = await confirmar_remesa(remesa_id, admin_uuid)
 
         if exito:
-            # Notificar al usuario
             if current_user_id:
                 usuario_destino = await obtener_usuario_por_uuid(current_user_id)
                 if usuario_destino:
@@ -1086,14 +1098,12 @@ async def callback_handler(event):
                 else:
                     mensaje += f"\n⚠️ No se encontró usuario con UUID {current_user_id}."
 
-            # Actualizar saldo del usuario
             if current_user_id:
                 exito_saldo, msg_saldo = await actualizar_saldo_usuario(current_user_id, current_amount, enabled_sum=True)
                 mensaje += f"\n{msg_saldo}"
             else:
                 mensaje += "\n⚠️ La remesa no tiene userId, no se actualizó saldo."
 
-            # Actualizar balance de la cuenta
             if not account_id_remesa and account_address:
                 cuentas = await listar_cuentas()
                 for c in cuentas:
@@ -1106,7 +1116,6 @@ async def callback_handler(event):
             else:
                 mensaje += "\n⚠️ No se encontró la cuenta asociada a esta remesa. No se actualizó el balance de cuenta."
 
-            # Registrar historial
             if current_user_id and account_address:
                 exito_history, msg_history = await crear_history_remittance(
                     user_id=current_user_id,
@@ -1237,7 +1246,7 @@ async def callback_handler(event):
         return
 
 # --------------------------------------------------------------
-# Conversación (mensajes de texto) - sin cambios
+# Conversación (mensajes de texto)
 # --------------------------------------------------------------
 @client.on(events.NewMessage)
 async def conversation_handler(event):
@@ -1290,33 +1299,23 @@ async def conversation_handler(event):
             await event.reply(respuesta)
             del user_states[user_id]
 
-    # Actualización de usuario
-    elif action == "update":
-        if state["step"] == "awaiting_new_name":
-            state["new_name"] = text
-            state["step"] = "awaiting_new_telegram_id"
-            user_states[user_id] = state
-            await event.reply("✅ Nombre guardado.\n\nEnvía el **nuevo ID de Telegram** (número):")
-        elif state["step"] == "awaiting_new_telegram_id":
-            try:
-                new_tid = int(text)
-            except ValueError:
-                await event.reply("❌ Debe ser número entero. Intenta de nuevo:")
-                return
-            state["new_telegram_id"] = new_tid
-            state["step"] = "awaiting_new_percent"
-            user_states[user_id] = state
-            await event.reply("✅ Nuevo ID guardado.\n\nEnvía el **nuevo porcentaje** (puede ser decimal):")
-        elif state["step"] == "awaiting_new_percent":
+    # Actualizar porcentaje (admin)
+    elif action == "update_percent":
+        if state["step"] == "awaiting_percent":
             try:
                 new_percent = float(text)
             except ValueError:
                 await event.reply("❌ Debe ser un número (puede ser decimal). Intenta de nuevo:")
                 return
-            user_uuid = state["user_uuid"]
-            new_name = state["new_name"]
-            new_tid = state["new_telegram_id"]
-            exito, mensaje = await actualizar_usuario(user_uuid, new_name, new_tid, new_percent)
+            user_uuid = state["target_user_uuid"]
+            usuario = await obtener_usuario_por_uuid(user_uuid)
+            if not usuario:
+                await event.reply("❌ Usuario no encontrado.")
+                del user_states[user_id]
+                return
+            name = usuario.get("name")
+            telegram_id = usuario.get("idUserTelegram")
+            exito, mensaje = await actualizar_usuario(user_uuid, name, telegram_id, new_percent)
             await event.reply(mensaje)
             del user_states[user_id]
 
@@ -1495,7 +1494,6 @@ async def conversation_handler(event):
 # Tarea en segundo plano: reporte diario a las 20:00
 # --------------------------------------------------------------
 async def daily_report_task():
-    """Cada día a las 20:00, obtiene todos los usuarios, sus remesas del día actual y envía un resumen."""
     while True:
         now = datetime.now(timezone.utc)
         target_hour = 20
