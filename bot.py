@@ -452,14 +452,39 @@ async def mostrar_cuentas(event, cuentas, titulo="🏦 **Lista de cuentas:**"):
         await event.reply(mensaje)
 
 # --------------------------------------------------------------
+# Menús principales
+# --------------------------------------------------------------
+async def send_user_menu(user_id: int):
+    """Envía el menú principal de usuario (tres botones de remesas)."""
+    botones = [
+        [Button.inline("➕ Crear remesa", data="user_create_remesa"),
+         Button.inline("👁️ Ver mis remesas", data="user_view_remesas"),
+         Button.inline("💰 Ver mi salario", data="user_view_salary")]
+    ]
+    await client.send_message(user_id, "📦 **Tus remesas**\nSelecciona una acción:", buttons=botones)
+
+async def send_admin_menu(user_id: int):
+    """Envía el menú principal del administrador (similar a /start)."""
+    mensaje = (
+        "¡Hola! Soy el bot de gestión.\n"
+        "Usa /user para gestión de usuarios (solo admin).\n"
+        "Usa /remesas para gestionar tus remesas y salario.\n"
+        "Usa /cuentas para gestionar cuentas bancarias (solo admin)."
+    )
+    await client.send_message(user_id, mensaje)
+
+# --------------------------------------------------------------
 # Handlers de comandos
 # --------------------------------------------------------------
 @client.on(events.NewMessage(pattern='/start'))
 async def start_handler(event):
-    await event.respond('¡Hola! Soy el bot de gestión.\n'
-                        'Usa /user para gestión de usuarios.\n'
-                        'Usa /remesas para gestionar tus remesas y salario.\n'
-                        'Usa /cuentas para gestionar cuentas bancarias (solo admin).')
+    user_id = event.sender_id
+    es_admin, _ = await verificar_admin(user_id)
+    if es_admin:
+        await send_admin_menu(user_id)
+    else:
+        # Para usuarios normales, el inicio también puede mostrar el menú de remesas
+        await send_user_menu(user_id)
 
 @client.on(events.NewMessage(pattern='/user'))
 async def user_handler(event):
@@ -502,12 +527,7 @@ async def remesas_handler(event):
             await event.reply("❌ Error: tu usuario no tiene UUID válido.")
             return
         user_states[user_id] = {"user_uuid": user_uuid}
-        botones = [
-            [Button.inline("➕ Crear remesa", data="user_create_remesa"),
-             Button.inline("👁️ Ver mis remesas", data="user_view_remesas"),
-             Button.inline("💰 Ver mi salario", data="user_view_salary")]
-        ]
-        await event.respond("📦 **Tus remesas**\nSelecciona una acción:", buttons=botones)
+        await send_user_menu(user_id)
 
 @client.on(events.NewMessage(pattern='/cuentas'))
 async def cuentas_handler(event):
@@ -536,6 +556,18 @@ async def callback_handler(event):
             await event.answer(text, alert=alert)
         except Exception as e:
             logging.warning(f"Error al responder callback: {e}")
+
+    async def finalizar_accion_admin(mensaje=None):
+        """Envía el menú de administrador después de una acción."""
+        if mensaje:
+            await event.reply(mensaje)
+        await send_admin_menu(user_id)
+
+    async def finalizar_accion_user(mensaje=None):
+        """Envía el menú de usuario después de una acción."""
+        if mensaje:
+            await event.reply(mensaje)
+        await send_user_menu(user_id)
 
     # ---------- Selección de cuenta para crear remesa ----------
     if data.startswith("select_account_"):
@@ -607,12 +639,12 @@ async def callback_handler(event):
         ]
         try:
             await client.send_message(ADMIN_CHAT_ID, admin_msg, buttons=botones_admin, parse_mode='markdown')
+            await event.edit("✅ Solicitud de retiro enviada. Espera confirmación del administrador.")
+            await finalizar_accion_user("✅ Solicitud enviada. Recibirás respuesta en breve.")
         except Exception as e:
             logging.error(f"Error al enviar mensaje al administrador: {e}")
             await safe_answer("❌ No se pudo enviar la solicitud al administrador.", alert=True)
-            return
-        await safe_answer("✅ Solicitud de retiro enviada al administrador. Espera la confirmación.")
-        await event.edit("💰 **Solicitud enviada**\n\nSe notificó al administrador. Recibirás una respuesta en breve.")
+        del user_states[user_id]
         return
 
     # ---------- Retiro total ----------
@@ -645,12 +677,12 @@ async def callback_handler(event):
         ]
         try:
             await client.send_message(ADMIN_CHAT_ID, admin_msg, buttons=botones_admin, parse_mode='markdown')
+            await event.edit("✅ Solicitud de retiro total enviada. Espera confirmación.")
+            await finalizar_accion_user("✅ Solicitud enviada. Recibirás respuesta en breve.")
         except Exception as e:
             logging.error(f"Error al enviar mensaje al administrador: {e}")
             await safe_answer("❌ No se pudo enviar la solicitud al administrador.", alert=True)
-            return
-        await safe_answer("✅ Solicitud de retiro enviada al administrador.")
-        await event.edit("💰 **Solicitud enviada**\n\nSe notificó al administrador. Recibirás una respuesta en breve.")
+        del user_states[user_id]
         return
 
     # ---------- Aprobación / rechazo de retiros ----------
@@ -675,6 +707,8 @@ async def callback_handler(event):
         await event.edit(f"✅ Retiro aprobado para el usuario {user_id_solicitante} por {amount}.\nResultado: {mensaje}")
         await safe_answer("Retiro aprobado.")
         del user_states[f"pending_{solicitud_id}"]
+        # Después de aprobar, volver al menú admin
+        await send_admin_menu(user_id)
         return
 
     if data.startswith("reject_withdraw_"):
@@ -693,6 +727,7 @@ async def callback_handler(event):
         await event.edit(f"❌ Retiro rechazado para el usuario {user_id_solicitante} por {amount}.")
         await safe_answer("Retiro rechazado.")
         del user_states[f"pending_{solicitud_id}"]
+        await send_admin_menu(user_id)
         return
 
     # ---------- Eliminación de usuarios ----------
@@ -701,10 +736,12 @@ async def callback_handler(event):
         exito, mensaje = await eliminar_usuario(user_uuid)
         await safe_answer(mensaje, alert=True)
         await event.edit(mensaje)
+        await send_admin_menu(user_id)
         return
     if data.startswith("cancel_del"):
         await safe_answer("Eliminación cancelada.")
         await event.edit("❌ Eliminación cancelada.")
+        await send_admin_menu(user_id)
         return
     if data.startswith("deluser_"):
         user_uuid = data.replace("deluser_", "")
@@ -720,18 +757,16 @@ async def callback_handler(event):
     if data == "createuser":
         es_admin, admin_uuid = await verificar_admin(user_id)
         if es_admin:
-            # Flujo admin: pedir nombre, luego telegram_id, luego porcentaje
             user_states[user_id] = {"action": "create", "step": "awaiting_name", "admin_id": admin_uuid}
             await event.edit("📝 **Crear nuevo usuario**\n\nEnvía el **nombre**:")
             await safe_answer("Ingresa el nombre.")
         else:
-            # Flujo usuario normal: pedir nombre y luego enviar solicitud al admin
             user_states[user_id] = {"action": "request_create", "step": "awaiting_name", "user_telegram_id": user_id}
             await event.edit("📝 **Solicitar creación de usuario**\n\nEnvía tu **nombre**:")
             await safe_answer("Ingresa tu nombre.")
         return
 
-    # Actualizar porcentaje (solo admin)
+    # Actualizar porcentaje
     if data == "update_percent":
         es_admin, _ = await verificar_admin(user_id)
         if not es_admin:
@@ -746,7 +781,7 @@ async def callback_handler(event):
             nombre = u.get("name", "Sin nombre")
             uid = u.get("id")
             botones.append([Button.inline(f"📊 {nombre}", data=f"update_percent_user_{uid}")])
-        user_states[user_id] = {"action": "select_user_for_percent", "usuarios": usuarios}
+        user_states[user_id] = {"action": "select_user_for_percent"}
         await event.edit("Selecciona el usuario para actualizar su porcentaje:", buttons=botones)
         await safe_answer("Selecciona un usuario.")
         return
@@ -762,7 +797,7 @@ async def callback_handler(event):
         await safe_answer("Esperando porcentaje...")
         return
 
-    # Aprobar solicitud de creación de usuario (admin)
+    # Aprobar solicitud de creación de usuario
     if data.startswith("approve_user_"):
         request_id = data.replace("approve_user_", "")
         es_admin, admin_uuid = await verificar_admin(user_id)
@@ -773,7 +808,6 @@ async def callback_handler(event):
         if not request:
             await safe_answer("❌ Solicitud no encontrada o expirada.", alert=True)
             return
-        # Guardar estado para que el admin ingrese el porcentaje
         user_states[user_id] = {
             "action": "approving_user",
             "step": "awaiting_percent",
@@ -781,7 +815,6 @@ async def callback_handler(event):
             "user_telegram_id": request["user_telegram_id"],
             "admin_id": admin_uuid
         }
-        # Eliminar la solicitud pendiente
         del user_states[f"pending_{request_id}"]
         await event.edit("✏️ Ingresa el **porcentaje** para este usuario (puede ser decimal, ej: 2.5):")
         await safe_answer("Esperando porcentaje...")
@@ -795,7 +828,6 @@ async def callback_handler(event):
             return
         request = user_states.get(f"pending_{request_id}")
         if request:
-            # Notificar al usuario
             user_id_solicitante = request["user_telegram_id"]
             try:
                 await client.send_message(user_id_solicitante, "❌ Tu solicitud de creación de usuario fue rechazada.")
@@ -803,10 +835,10 @@ async def callback_handler(event):
                 pass
             del user_states[f"pending_{request_id}"]
         await event.edit("❌ Solicitud rechazada.")
-        await safe_answer("Rechazado.")
+        await send_admin_menu(user_id)
         return
 
-    # Ver usuarios (admin)
+    # Ver usuarios
     if data == "viewuser":
         es_admin, _ = await verificar_admin(user_id)
         if es_admin:
@@ -821,6 +853,7 @@ async def callback_handler(event):
                 mensaje += (f"**{u.get('name')}** - Telegram ID: `{u.get('idUserTelegram')}` - "
                             f"Porcentaje: {per_cent_str}%\nUUID: `{u.get('id')}`\n\n")
             await event.edit(mensaje)
+            # No salir del menú de usuarios, permitir seguir
         else:
             usuario = await obtener_usuario_por_telegram_id(user_id)
             if not usuario:
@@ -830,6 +863,8 @@ async def callback_handler(event):
             per_cent_str = f"{per_cent:.2f}".rstrip('0').rstrip('.') if isinstance(per_cent, float) else str(per_cent)
             mensaje = f"👤 **Tus datos:**\nNombre: {usuario.get('name')}\nTelegram ID: `{usuario.get('idUserTelegram')}`\nPorcentaje: {per_cent_str}%\nUUID: `{usuario.get('id')}`"
             await event.edit(mensaje)
+        # Después de ver, devolver al menú anterior (podría ser el mismo de usuario)
+        await send_user_menu(user_id)
         return
 
     # Delete user (admin)
@@ -911,13 +946,8 @@ async def callback_handler(event):
         elif filtro == "60d":
             start_date = now - timedelta(days=60)
         elif filtro == "back":
-            botones_menu = [
-                [Button.inline("➕ Crear remesa", data="user_create_remesa"),
-                 Button.inline("👁️ Ver mis remesas", data="user_view_remesas"),
-                 Button.inline("💰 Ver mi salario", data="user_view_salary")]
-            ]
-            await event.edit("📦 **Tus remesas**\nSelecciona una acción:", buttons=botones_menu)
-            await safe_answer("Volviendo al menú.")
+            await send_user_menu(user_id)
+            await event.delete()
             return
         else:
             await safe_answer("Filtro no válido.", alert=True)
@@ -1000,13 +1030,8 @@ async def callback_handler(event):
             return
         user_uuid = usuario.get("id")
         user_states[user_id] = {"user_uuid": user_uuid}
-        botones = [
-            [Button.inline("➕ Crear remesa", data="user_create_remesa"),
-             Button.inline("👁️ Ver mis remesas", data="user_view_remesas"),
-             Button.inline("💰 Ver mi salario", data="user_view_salary")]
-        ]
-        await event.edit("📦 **Tus remesas**\nSelecciona una acción:", buttons=botones)
-        await safe_answer("Operación cancelada.")
+        await send_user_menu(user_id)
+        await event.delete()
         return
 
     # ---------- Acciones de administrador (remesas) ----------
@@ -1015,7 +1040,6 @@ async def callback_handler(event):
         if not es_admin:
             await safe_answer("⛔ No eres administrador.", alert=True)
             return
-        # Mostrar filtros de fechas para el historial de todos los usuarios
         user_states[user_id] = {"action": "admin_history_filters"}
         botones_filtros = [
             [Button.inline("📅 Hoy", data="admin_history_today"),
@@ -1028,7 +1052,6 @@ async def callback_handler(event):
         await safe_answer("Elige un filtro de fecha.")
         return
 
-    # Filtros de historial para admin
     if data.startswith("admin_history_"):
         filtro = data.replace("admin_history_", "")
         if filtro == "back":
@@ -1061,13 +1084,11 @@ async def callback_handler(event):
             await safe_answer("Filtro no válido.", alert=True)
             return
 
-        # Obtener todos los usuarios
         usuarios = await listar_usuarios()
         if not usuarios:
             await event.edit("❌ No se pudo obtener la lista de usuarios.")
             return
 
-        # Recolectar todas las remesas del historial de cada usuario
         all_remittances = []
         for user_data in usuarios:
             user_uuid = user_data.get("id")
@@ -1092,11 +1113,9 @@ async def callback_handler(event):
             await event.edit(f"📭 No hay remesas en el período seleccionado ({filtro}).")
             return
 
-        # Ordenar por fecha descendente
         all_remittances.sort(key=lambda x: x["createdAt"], reverse=True)
-
         mensaje = f"📊 **Remesas de todos los usuarios - {filtro.upper()}**\n\n"
-        for idx, r in enumerate(all_remittances[:30], 1):  # límite 30 para no saturar
+        for idx, r in enumerate(all_remittances[:30], 1):
             mensaje += (
                 f"**{idx}.** Usuario: {r['user_name']}\n"
                 f"   Cliente: {r['customer']}\n"
@@ -1132,6 +1151,7 @@ async def callback_handler(event):
             await event.reply(mensaje)
         await event.delete()
         await safe_answer("Lista de salarios mostrada.")
+        await send_admin_menu(user_id)
         return
 
     if data == "admin_create_remesa":
@@ -1277,6 +1297,8 @@ async def callback_handler(event):
 
         await event.edit(mensaje)
         await safe_answer("Remesa actualizada.", alert=True)
+        # Volver al menú admin
+        await send_admin_menu(user_id)
         return
 
     if data.startswith("delete_remesa_"):
@@ -1338,6 +1360,7 @@ async def callback_handler(event):
 
         await event.edit(resultado)
         await safe_answer("Remesa eliminada.", alert=True)
+        await send_admin_menu(user_id)
         return
 
     # ---------- Acciones de administrador (cuentas) ----------
@@ -1391,6 +1414,8 @@ async def callback_handler(event):
             return
         await mostrar_cuentas(event, cuentas, titulo="🏦 **Lista de cuentas:**")
         await event.delete()
+        # Después de ver cuentas, volver al menú admin
+        await send_admin_menu(user_id)
         return
 
 # --------------------------------------------------------------
@@ -1409,10 +1434,15 @@ async def conversation_handler(event):
     text = event.raw_text.strip()
     if text.lower() == "cancel":
         del user_states[user_id]
+        es_admin, _ = await verificar_admin(user_id)
+        if es_admin:
+            await send_admin_menu(user_id)
+        else:
+            await send_user_menu(user_id)
         await event.reply("❌ Operación cancelada.")
         return
 
-    # Creación de usuario por admin (flujo original)
+    # Creación de usuario por admin
     if action == "create":
         if state["step"] == "awaiting_name":
             state["name"] = text
@@ -1446,6 +1476,8 @@ async def conversation_handler(event):
                 respuesta = mensaje
             await event.reply(respuesta)
             del user_states[user_id]
+            await send_admin_menu(user_id)
+            return
 
     # Solicitud de creación por usuario normal
     elif action == "request_create":
@@ -1469,8 +1501,10 @@ async def conversation_handler(event):
                 logging.error(f"Error al enviar solicitud: {e}")
                 await event.reply("❌ Error al enviar la solicitud. Intenta más tarde.")
             del user_states[user_id]
+            await send_user_menu(user_id)
+            return
 
-    # Admin aprobando y pidiendo porcentaje (después de click en aprobar)
+    # Admin aprobando y pidiendo porcentaje
     elif action == "approving_user":
         if state["step"] == "awaiting_percent":
             try:
@@ -1485,7 +1519,6 @@ async def conversation_handler(event):
             if exito and user_uuid:
                 pago_exito, pago_mensaje = await crear_pay(user_uuid)
                 respuesta = f"{mensaje}\n{pago_mensaje}\nPorcentaje asignado: {per_cent}%"
-                # Notificar al nuevo usuario
                 try:
                     await client.send_message(user_telegram_id, f"✅ Tu usuario ha sido creado con nombre '{name}'. Ahora puedes usar el bot.")
                 except:
@@ -1494,6 +1527,8 @@ async def conversation_handler(event):
                 respuesta = mensaje
             await event.reply(respuesta)
             del user_states[user_id]
+            await send_admin_menu(user_id)
+            return
 
     # Admin actualizando porcentaje
     elif action == "update_percent":
@@ -1508,10 +1543,13 @@ async def conversation_handler(event):
             if not usuario:
                 await event.reply("❌ Usuario no encontrado.")
                 del user_states[user_id]
+                await send_admin_menu(user_id)
                 return
             exito, mensaje = await actualizar_usuario(user_uuid, usuario["name"], usuario["idUserTelegram"], new_percent)
             await event.reply(mensaje)
             del user_states[user_id]
+            await send_admin_menu(user_id)
+            return
 
     # Admin creando remesa
     elif action == "admin_create_remesa":
@@ -1533,6 +1571,7 @@ async def conversation_handler(event):
             if not cuentas:
                 await event.reply("❌ No hay cuentas registradas. Crea una cuenta primero usando /cuentas.")
                 del user_states[user_id]
+                await send_admin_menu(user_id)
                 return
             botones_cuentas = []
             for idx, c in enumerate(cuentas[:20], start=1):
@@ -1559,6 +1598,8 @@ async def conversation_handler(event):
             )
             await event.reply(mensaje)
             del user_states[user_id]
+            await send_admin_menu(user_id)
+            return
 
     # Usuario normal creando remesa
     elif action == "user_create_remesa":
@@ -1580,6 +1621,7 @@ async def conversation_handler(event):
             if not cuentas:
                 await event.reply("❌ No hay cuentas registradas. Contacta a un administrador.")
                 del user_states[user_id]
+                await send_user_menu(user_id)
                 return
             botones_cuentas = []
             for idx, c in enumerate(cuentas[:20], start=1):
@@ -1606,61 +1648,15 @@ async def conversation_handler(event):
             )
             await event.reply(mensaje)
             del user_states[user_id]
+            await send_user_menu(user_id)
+            return
 
-    # Retiro parcial
+    # Retiro parcial (flujo iniciado por usuario)
     elif action == "withdraw_partial":
-        if state["step"] == "awaiting_amount":
-            try:
-                monto = float(text)
-                if monto <= 0:
-                    raise ValueError
-            except ValueError:
-                await event.reply("❌ Monto inválido. Envía un número positivo (ej: 100.00):")
-                return
-            usuario = await obtener_usuario_por_telegram_id(user_id)
-            if not usuario:
-                await event.reply("No se encontró tu usuario.")
-                del user_states[user_id]
-                return
-            user_uuid = usuario.get("id")
-            user_name = usuario.get("name", "Usuario")
-            pagos = await listar_pagos()
-            saldo_actual = None
-            for p in pagos:
-                if p.get("userId") == user_uuid:
-                    saldo_actual = p.get("amount")
-                    break
-            if saldo_actual is None:
-                await event.reply("No se pudo obtener tu saldo.")
-                del user_states[user_id]
-                return
-            if monto > saldo_actual:
-                await event.reply(f"❌ No puedes retirar {monto} porque tu saldo es {saldo_actual}.")
-                return
+        # Este flujo ya está manejado en los callbacks, no debería llegar aquí
+        pass
 
-            solicitud_id = f"withdraw_{user_id}_{int(asyncio.get_event_loop().time())}"
-            user_states[f"pending_{solicitud_id}"] = {
-                "user_id": user_id,
-                "user_uuid": user_uuid,
-                "amount": monto,
-                "type": "partial"
-            }
-            admin_msg = f"💰 *Solicitud de retiro*\n\nUsuario: {user_name} (ID: {user_id})\nMonto: {monto}\nSaldo actual: {saldo_actual}\n\n¿Aprobar?"
-            botones_admin = [
-                [Button.inline("✅ Confirmar", data=f"approve_withdraw_{solicitud_id}"),
-                 Button.inline("❌ Rechazar", data=f"reject_withdraw_{solicitud_id}")]
-            ]
-            try:
-                await client.send_message(ADMIN_CHAT_ID, admin_msg, buttons=botones_admin, parse_mode='markdown')
-            except Exception as e:
-                logging.error(f"Error al enviar mensaje al administrador: {e}")
-                await event.reply("❌ No se pudo enviar la solicitud al administrador.")
-                del user_states[user_id]
-                return
-            await event.reply("✅ Solicitud de retiro enviada al administrador. Espera la confirmación.")
-            del user_states[user_id]
-
-    # Acciones de cuentas
+    # Crear cuenta (admin)
     elif action == "create_account":
         if state["step"] == "awaiting_account":
             account_address = text
@@ -1668,7 +1664,10 @@ async def conversation_handler(event):
             exito, mensaje = await crear_cuenta(account_address, admin_id)
             await event.reply(mensaje)
             del user_states[user_id]
+            await send_admin_menu(user_id)
+            return
 
+    # Retirar saldo de cuenta (admin)
     elif action == "withdraw":
         if state["step"] == "awaiting_value":
             try:
@@ -1683,6 +1682,8 @@ async def conversation_handler(event):
             exito, mensaje = await retirar_saldo(account_id, admin_id, value)
             await event.reply(mensaje)
             del user_states[user_id]
+            await send_admin_menu(user_id)
+            return
 
 # --------------------------------------------------------------
 # Tarea en segundo plano: reporte diario a las 20:00
