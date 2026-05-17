@@ -26,7 +26,7 @@ FILES_DIR.mkdir(exist_ok=True)
 BASE_URL = "https://botremesasapi-production.up.railway.app"
 
 # --------------------------------------------------------------
-# Funciones de API
+# Funciones de API (sin cambios)
 # --------------------------------------------------------------
 async def verificar_admin(user_telegram_id: int):
     url = f"{BASE_URL}/api/admin"
@@ -1029,8 +1029,11 @@ async def callback_handler(event):
             await safe_answer("⛔ No eres administrador.", alert=True)
             return
 
-        await event.delete()
+        # Guardar el filtro seleccionado
         user_states[user_id] = {"admin_selected_filter": filtro}
+        # Eliminar mensaje de filtros
+        await event.delete()
+        # Obtener usuarios
         usuarios = await listar_usuarios()
         if not usuarios:
             await client.send_message(
@@ -1041,16 +1044,18 @@ async def callback_handler(event):
             await safe_answer("Error: lista de usuarios vacía.")
             return
 
+        # Construir botones de usuarios
         botones_usuarios = []
         for u in usuarios[:20]:
             nombre = u.get("name", "Sin nombre")
             uid = u.get("id")
             botones_usuarios.append([Button.inline(f"👤 {nombre}", data=f"admin_history_user_{uid}")])
+        # Botón para volver a filtros
         botones_usuarios.append([Button.inline("🔙 Volver a filtros", data="admin_view_remesas")])
 
         await client.send_message(
             user_id,
-            "📌 **Selecciona un usuario para ver sus remesas en el período seleccionado:**",
+            f"📌 **Selecciona un usuario para ver sus remesas en el período: {filtro.upper()}**",
             buttons=botones_usuarios
         )
         await safe_answer("Selecciona un usuario.")
@@ -1084,7 +1089,11 @@ async def callback_handler(event):
 
         history = await listar_history_remittances(user_uuid)
         if history is None:
-            await event.edit("❌ Error al obtener el historial de remesas para este usuario.")
+            await client.send_message(
+                user_id,
+                "❌ Error al obtener el historial de remesas para este usuario.",
+                buttons=[[Button.inline("🔙 Volver a selección de usuario", data="admin_view_remesas")]]
+            )
             return
 
         filtered = []
