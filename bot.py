@@ -17,18 +17,17 @@ BOT_TOKEN = os.getenv('BOT_TOKEN')
 
 client = TelegramClient('bot_session', API_ID, API_HASH)
 
-# ID del administrador (solo para retiros)
 ADMIN_CHAT_ID = 1425847313  # Cambia por el ID real del admin
 
 user_states = {}
 FILES_DIR = Path("files")
 FILES_DIR.mkdir(exist_ok=True)
 
-# --------------------------------------------------------------
-# Funciones de API (sin cambios)
-# --------------------------------------------------------------
 BASE_URL = "https://botremesasapi-production.up.railway.app"
 
+# --------------------------------------------------------------
+# Funciones de API
+# --------------------------------------------------------------
 async def verificar_admin(user_telegram_id: int):
     url = f"{BASE_URL}/api/admin"
     try:
@@ -216,7 +215,8 @@ async def confirmar_remesa(remesa_id: str, admin_id: str):
         "amount": None,
         "urlImage": None,
         "address": None,
-        "userId": None
+        "userId": None,
+        "enabled": True
     }
     try:
         async with aiohttp.ClientSession() as session:
@@ -246,9 +246,7 @@ async def listar_pagos():
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
                 if resp.status == 200:
-                    data = await resp.json()
-                    logging.info(f"Pagos obtenidos: {data}")
-                    return data
+                    return await resp.json()
                 return None
     except Exception as e:
         logging.error(f"Error en listar_pagos: {e}")
@@ -343,10 +341,7 @@ async def listar_cuentas():
 
 async def crear_cuenta(account: str, admin_id: str):
     url = f"{BASE_URL}/api/account"
-    payload = {
-        "account": account,
-        "adminId": admin_id
-    }
+    payload = {"account": account, "adminId": admin_id}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload) as resp:
@@ -359,12 +354,7 @@ async def crear_cuenta(account: str, admin_id: str):
 
 async def retirar_saldo(account_id: str, admin_id: str, value: float):
     url = f"{BASE_URL}/api/account"
-    payload = {
-        "id": account_id,
-        "adminId": admin_id,
-        "enabledSum": False,
-        "value": value
-    }
+    payload = {"id": account_id, "adminId": admin_id, "enabledSum": False, "value": value}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.put(url, json=payload) as resp:
@@ -377,12 +367,7 @@ async def retirar_saldo(account_id: str, admin_id: str, value: float):
 
 async def actualizar_balance_cuenta(account_id: str, admin_id: str, value: float):
     url = f"{BASE_URL}/api/account"
-    payload = {
-        "id": account_id,
-        "adminId": admin_id,
-        "enabledSum": True,
-        "value": value
-    }
+    payload = {"id": account_id, "adminId": admin_id, "enabledSum": True, "value": value}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.put(url, json=payload) as resp:
@@ -395,12 +380,7 @@ async def actualizar_balance_cuenta(account_id: str, admin_id: str, value: float
 
 async def crear_history_remittance(user_id: str, account: str, amount: float, customer: str):
     url = f"{BASE_URL}/api/historyRemittance"
-    payload = {
-        "userId": user_id,
-        "account": account,
-        "amount": amount,
-        "customer": customer
-    }
+    payload = {"userId": user_id, "account": account, "amount": amount, "customer": customer}
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload) as resp:
@@ -455,7 +435,6 @@ async def mostrar_cuentas(event, cuentas, titulo="🏦 **Lista de cuentas:**"):
 # Menús principales
 # --------------------------------------------------------------
 async def send_user_menu(user_id: int):
-    """Envía el menú principal de usuario (tres botones de remesas)."""
     botones = [
         [Button.inline("➕ Crear remesa", data="user_create_remesa"),
          Button.inline("👁️ Ver mis remesas", data="user_view_remesas"),
@@ -464,7 +443,6 @@ async def send_user_menu(user_id: int):
     await client.send_message(user_id, "📦 **Tus remesas**\nSelecciona una acción:", buttons=botones)
 
 async def send_admin_menu(user_id: int):
-    """Envía el menú principal del administrador (similar a /start)."""
     mensaje = (
         "¡Hola! Soy el bot de gestión.\n"
         "Usa /user para gestión de usuarios (solo admin).\n"
@@ -498,9 +476,7 @@ async def user_handler(event):
         ]
         await event.respond("Selecciona una acción:", buttons=botones)
     else:
-        botones = [
-            [Button.inline("✨ Solicitar crear usuario", data="createuser")]
-        ]
+        botones = [[Button.inline("✨ Solicitar crear usuario", data="createuser")]]
         await event.respond("Para crear una cuenta, solicita al administrador:", buttons=botones)
 
 @client.on(events.NewMessage(pattern='/remesas'))
@@ -554,16 +530,6 @@ async def callback_handler(event):
             await event.answer(text, alert=alert)
         except Exception as e:
             logging.warning(f"Error al responder callback: {e}")
-
-    async def finalizar_accion_admin(mensaje=None):
-        if mensaje:
-            await event.reply(mensaje)
-        await send_admin_menu(user_id)
-
-    async def finalizar_accion_user(mensaje=None):
-        if mensaje:
-            await event.reply(mensaje)
-        await send_user_menu(user_id)
 
     # ---------- Selección de cuenta para crear remesa ----------
     if data.startswith("select_account_"):
@@ -636,11 +602,11 @@ async def callback_handler(event):
         try:
             await client.send_message(ADMIN_CHAT_ID, admin_msg, buttons=botones_admin, parse_mode='markdown')
             await event.edit("✅ Solicitud de retiro enviada. Espera confirmación del administrador.")
-            await finalizar_accion_user("✅ Solicitud enviada. Recibirás respuesta en breve.")
         except Exception as e:
             logging.error(f"Error al enviar mensaje al administrador: {e}")
             await safe_answer("❌ No se pudo enviar la solicitud al administrador.", alert=True)
         del user_states[user_id]
+        await send_user_menu(user_id)
         return
 
     # ---------- Retiro total ----------
@@ -674,11 +640,11 @@ async def callback_handler(event):
         try:
             await client.send_message(ADMIN_CHAT_ID, admin_msg, buttons=botones_admin, parse_mode='markdown')
             await event.edit("✅ Solicitud de retiro total enviada. Espera confirmación.")
-            await finalizar_accion_user("✅ Solicitud enviada. Recibirás respuesta en breve.")
         except Exception as e:
             logging.error(f"Error al enviar mensaje al administrador: {e}")
             await safe_answer("❌ No se pudo enviar la solicitud al administrador.", alert=True)
         del user_states[user_id]
+        await send_user_menu(user_id)
         return
 
     # ---------- Aprobación / rechazo de retiros ----------
@@ -1048,7 +1014,6 @@ async def callback_handler(event):
     if data.startswith("admin_history_"):
         filtro = data.replace("admin_history_", "")
         if filtro == "back":
-            # Volver al menú de admin de remesas
             botones = [
                 [Button.inline("➕ Crear remesa", data="admin_create_remesa"),
                  Button.inline("✏️ Actualizar remesa", data="admin_update_remesa")],
@@ -1064,18 +1029,30 @@ async def callback_handler(event):
             await safe_answer("⛔ No eres administrador.", alert=True)
             return
 
-        # Guardar el filtro seleccionado en el estado
+        await event.delete()
         user_states[user_id] = {"admin_selected_filter": filtro}
-        # Obtener lista de usuarios y mostrar botones para elegir
         usuarios = await listar_usuarios()
         if not usuarios:
-            await event.edit("❌ No se pudo obtener la lista de usuarios.")
+            await client.send_message(
+                user_id,
+                "❌ No hay usuarios registrados o no se pudo obtener la lista.\n\nUsa /user para crear un usuario.",
+                buttons=[[Button.inline("🔙 Volver al menú", data="admin_back_to_menu")]]
+            )
+            await safe_answer("Error: lista de usuarios vacía.")
             return
+
         botones_usuarios = []
-        for u in usuarios:
-            botones_usuarios.append([Button.inline(f"👤 {u['name']}", data=f"admin_history_user_{u['id']}")])
+        for u in usuarios[:20]:
+            nombre = u.get("name", "Sin nombre")
+            uid = u.get("id")
+            botones_usuarios.append([Button.inline(f"👤 {nombre}", data=f"admin_history_user_{uid}")])
         botones_usuarios.append([Button.inline("🔙 Volver a filtros", data="admin_view_remesas")])
-        await event.edit("📌 **Selecciona un usuario para ver sus remesas:**", buttons=botones_usuarios)
+
+        await client.send_message(
+            user_id,
+            "📌 **Selecciona un usuario para ver sus remesas en el período seleccionado:**",
+            buttons=botones_usuarios
+        )
         await safe_answer("Selecciona un usuario.")
         return
 
@@ -1089,6 +1066,7 @@ async def callback_handler(event):
         filtro = state.get("admin_selected_filter")
         if not filtro:
             await safe_answer("❌ No se ha seleccionado un filtro de fecha. Vuelve a empezar.", alert=True)
+            await client.send_message(user_id, "Por favor, selecciona un período desde /remesas -> Ver remesas.")
             return
 
         now = datetime.now(timezone.utc)
@@ -1109,7 +1087,6 @@ async def callback_handler(event):
             await event.edit("❌ Error al obtener el historial de remesas para este usuario.")
             return
 
-        # Filtrar por fecha
         filtered = []
         for h in history:
             created_at = datetime.fromisoformat(h["createdAt"].replace("Z", "+00:00"))
@@ -1117,12 +1094,15 @@ async def callback_handler(event):
                 filtered.append(h)
 
         if not filtered:
-            await event.edit(f"📭 No hay remesas para este usuario en el período seleccionado ({filtro}).")
+            await client.send_message(
+                user_id,
+                f"📭 No hay remesas para este usuario en el período seleccionado ({filtro}).",
+                buttons=[[Button.inline("🔙 Volver a selección de usuario", data="admin_view_remesas")]]
+            )
+            await event.delete()
             return
 
-        # Ordenar por fecha descendente
         filtered.sort(key=lambda x: x["createdAt"], reverse=True)
-
         mensaje = f"📊 **Remesas del usuario - {filtro.upper()}**\n\n"
         for idx, h in enumerate(filtered[:30], 1):
             mensaje += (
@@ -1236,7 +1216,6 @@ async def callback_handler(event):
         await safe_answer("Remesas pendientes mostradas.")
         return
 
-    # ---------- CONFIRMAR REMESA ----------
     if data.startswith("confirm_update_remesa_"):
         remesa_id = data.replace("confirm_update_remesa_", "")
         es_admin, admin_uuid = await verificar_admin(user_id)
@@ -1434,7 +1413,7 @@ async def callback_handler(event):
         return
 
 # --------------------------------------------------------------
-# Conversación (mensajes de texto) - sin cambios
+# Conversación (mensajes de texto)
 # --------------------------------------------------------------
 @client.on(events.NewMessage)
 async def conversation_handler(event):
@@ -1666,9 +1645,8 @@ async def conversation_handler(event):
             await send_user_menu(user_id)
             return
 
-    # Retiro parcial (flujo iniciado por usuario)
+    # Retiro parcial (flujo iniciado por usuario) – ya manejado en callbacks
     elif action == "withdraw_partial":
-        # Este flujo ya está manejado en los callbacks, no debería llegar aquí
         pass
 
     # Crear cuenta (admin)
@@ -1704,10 +1682,9 @@ async def conversation_handler(event):
 # Tarea en segundo plano: reporte diario a las 20:00 Cuba (UTC 0)
 # --------------------------------------------------------------
 async def daily_report_task():
-    """Cada día a las 20:00 hora de Cuba (00:00 UTC), obtiene todos los usuarios, sus remesas del día actual y envía un resumen."""
     while True:
         now = datetime.now(timezone.utc)
-        target_hour = 0
+        target_hour = 0  # 20:00 Cuba = 00:00 UTC
         target_minute = 0
         target_second = 0
         next_run = now.replace(hour=target_hour, minute=target_minute, second=target_second, microsecond=0)
