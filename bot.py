@@ -17,7 +17,7 @@ BOT_TOKEN = os.getenv('BOT_TOKEN')
 
 client = TelegramClient('bot_session', API_ID, API_HASH)
 
-ADMIN_CHAT_ID = 1042242673  # Cambia por el ID real del admin
+ADMIN_CHAT_ID = 1425847313  # Cambia por el ID real del admin
 
 user_states = {}
 FILES_DIR = Path("files")
@@ -26,7 +26,7 @@ FILES_DIR.mkdir(exist_ok=True)
 BASE_URL = "https://botremesasapi-production.up.railway.app"
 
 # --------------------------------------------------------------
-# Funciones de API (sin cambios)
+# Funciones de API (iguales a las que ya tenías)
 # --------------------------------------------------------------
 async def verificar_admin(user_telegram_id: int):
     url = f"{BASE_URL}/api/admin"
@@ -881,10 +881,17 @@ async def callback_handler(event):
              Button.inline("📅 7 días", data="history_7d")],
             [Button.inline("📅 30 días", data="history_30d"),
              Button.inline("📅 60 días", data="history_60d")],
-            [Button.inline("🔙 Volver", data="history_back")]
+            [Button.inline("🔙 Volver", data="history_back"),
+             Button.inline("🏠 Volver al menú principal", data="user_back_to_main")]
         ]
         await event.edit("📆 **Selecciona el período para ver tus remesas:**", buttons=botones_filtros)
         await safe_answer("Elige un filtro de fecha.")
+        return
+
+    if data == "user_back_to_main":
+        await send_user_menu(user_id)
+        await event.delete()
+        await safe_answer("Volviendo al menú principal.")
         return
 
     if data.startswith("history_"):
@@ -939,7 +946,10 @@ async def callback_handler(event):
         if len(filtered) > 20:
             mensaje += "_Mostrando solo las primeras 20 remesas._"
 
-        botones_volver = [[Button.inline("🔙 Volver a filtros", data="user_view_remesas")]]
+        botones_volver = [
+            [Button.inline("🔙 Volver a filtros", data="user_view_remesas")],
+            [Button.inline("🏠 Volver al menú principal", data="user_back_to_main")]
+        ]
         await client.send_message(user_id, mensaje, buttons=botones_volver)
         await event.delete()
         await safe_answer("Resultados enviados.")
