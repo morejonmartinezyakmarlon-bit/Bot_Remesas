@@ -518,7 +518,7 @@ async def cuentas_handler(event):
     await event.respond("🏦 **Gestión de cuentas**\nSelecciona una acción:", buttons=botones)
 
 # --------------------------------------------------------------
-# Callback principal
+# Callback principal (solo se modifican los bloques de admin_view_remesas y admin_history_)
 # --------------------------------------------------------------
 @client.on(events.CallbackQuery)
 async def callback_handler(event):
@@ -1476,7 +1476,7 @@ async def conversation_handler(event):
             try:
                 per_cent = float(text)
                 if per_cent < 0:
-                    raise ValueError("Porcentaje negativo no permitido")
+                    raise ValueError
             except ValueError:
                 await event.reply("❌ Debe ser un número no negativo (puede ser decimal). Intenta de nuevo:")
                 return
@@ -1525,7 +1525,7 @@ async def conversation_handler(event):
             try:
                 per_cent = float(text)
                 if per_cent < 0:
-                    raise ValueError("Porcentaje negativo no permitido")
+                    raise ValueError
             except ValueError:
                 await event.reply("❌ Debe ser un número no negativo (puede ser decimal). Intenta de nuevo:")
                 return
@@ -1553,7 +1553,7 @@ async def conversation_handler(event):
             try:
                 new_percent = float(text)
                 if new_percent < 0:
-                    raise ValueError("Porcentaje negativo no permitido")
+                    raise ValueError
             except ValueError:
                 await event.reply("❌ Debe ser un número no negativo (puede ser decimal). Intenta de nuevo:")
                 return
@@ -1576,7 +1576,7 @@ async def conversation_handler(event):
             try:
                 amount = float(text)
                 if amount <= 0:
-                    raise ValueError("Monto no positivo")
+                    raise ValueError
             except ValueError:
                 await event.reply("❌ Monto inválido. Envía un número positivo (ej: 150.00):")
                 return
@@ -1628,7 +1628,7 @@ async def conversation_handler(event):
             try:
                 amount = float(text)
                 if amount <= 0:
-                    raise ValueError("Monto no positivo")
+                    raise ValueError
             except ValueError:
                 await event.reply("❌ Monto inválido. Envía un número positivo (ej: 150.00):")
                 return
@@ -1681,7 +1681,7 @@ async def conversation_handler(event):
             try:
                 monto = float(text)
                 if monto <= 0:
-                    raise ValueError("Monto no positivo")
+                    raise ValueError
             except ValueError:
                 await event.reply("❌ Monto inválido. Envía un número positivo (ej: 100.00):")
                 return
@@ -1744,7 +1744,7 @@ async def conversation_handler(event):
             try:
                 value = float(text)
                 if value <= 0:
-                    raise ValueError("Monto no positivo")
+                    raise ValueError
             except ValueError:
                 await event.reply("❌ Monto inválido. Envía un número positivo (ej: 100.00):")
                 return
