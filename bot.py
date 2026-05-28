@@ -17,17 +17,18 @@ BOT_TOKEN = os.getenv('BOT_TOKEN')
 
 client = TelegramClient('bot_session', API_ID, API_HASH)
 
+# ID del administrador (solo para retiros)
 ADMIN_CHAT_ID = 1425847313  # Cambia por el ID real del admin
 
 user_states = {}
 FILES_DIR = Path("files")
 FILES_DIR.mkdir(exist_ok=True)
 
+# --------------------------------------------------------------
+# Funciones de API
+# --------------------------------------------------------------
 BASE_URL = "https://botremesasapi-production.up.railway.app"
 
-# --------------------------------------------------------------
-# Funciones de API (iguales a las que ya tenías)
-# --------------------------------------------------------------
 async def verificar_admin(user_telegram_id: int):
     url = f"{BASE_URL}/api/admin"
     try:
@@ -215,8 +216,7 @@ async def confirmar_remesa(remesa_id: str, admin_id: str):
         "amount": None,
         "urlImage": None,
         "address": None,
-        "userId": None,
-        "enabled": True
+        "userId": None
     }
     try:
         async with aiohttp.ClientSession() as session:
@@ -246,7 +246,9 @@ async def listar_pagos():
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
                 if resp.status == 200:
-                    return await resp.json()
+                    data = await resp.json()
+                    logging.info(f"Pagos obtenidos: {data}")
+                    return data
                 return None
     except Exception as e:
         logging.error(f"Error en listar_pagos: {e}")
@@ -341,7 +343,10 @@ async def listar_cuentas():
 
 async def crear_cuenta(account: str, admin_id: str):
     url = f"{BASE_URL}/api/account"
-    payload = {"account": account, "adminId": admin_id}
+    payload = {
+        "account": account,
+        "adminId": admin_id
+    }
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload) as resp:
@@ -354,7 +359,12 @@ async def crear_cuenta(account: str, admin_id: str):
 
 async def retirar_saldo(account_id: str, admin_id: str, value: float):
     url = f"{BASE_URL}/api/account"
-    payload = {"id": account_id, "adminId": admin_id, "enabledSum": False, "value": value}
+    payload = {
+        "id": account_id,
+        "adminId": admin_id,
+        "enabledSum": False,
+        "value": value
+    }
     try:
         async with aiohttp.ClientSession() as session:
             async with session.put(url, json=payload) as resp:
@@ -367,7 +377,12 @@ async def retirar_saldo(account_id: str, admin_id: str, value: float):
 
 async def actualizar_balance_cuenta(account_id: str, admin_id: str, value: float):
     url = f"{BASE_URL}/api/account"
-    payload = {"id": account_id, "adminId": admin_id, "enabledSum": True, "value": value}
+    payload = {
+        "id": account_id,
+        "adminId": admin_id,
+        "enabledSum": True,
+        "value": value
+    }
     try:
         async with aiohttp.ClientSession() as session:
             async with session.put(url, json=payload) as resp:
@@ -380,7 +395,12 @@ async def actualizar_balance_cuenta(account_id: str, admin_id: str, value: float
 
 async def crear_history_remittance(user_id: str, account: str, amount: float, customer: str):
     url = f"{BASE_URL}/api/historyRemittance"
-    payload = {"userId": user_id, "account": account, "amount": amount, "customer": customer}
+    payload = {
+        "userId": user_id,
+        "account": account,
+        "amount": amount,
+        "customer": customer
+    }
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload) as resp:
@@ -435,6 +455,7 @@ async def mostrar_cuentas(event, cuentas, titulo="🏦 **Lista de cuentas:**"):
 # Menús principales
 # --------------------------------------------------------------
 async def send_user_menu(user_id: int):
+    """Envía el menú principal de usuario (tres botones de remesas)."""
     botones = [
         [Button.inline("➕ Crear remesa", data="user_create_remesa"),
          Button.inline("👁️ Ver mis remesas", data="user_view_remesas"),
@@ -443,6 +464,7 @@ async def send_user_menu(user_id: int):
     await client.send_message(user_id, "📦 **Tus remesas**\nSelecciona una acción:", buttons=botones)
 
 async def send_admin_menu(user_id: int):
+    """Envía el menú principal del administrador (similar a /start)."""
     mensaje = (
         "¡Hola! Soy el bot de gestión.\n"
         "Usa /user para gestión de usuarios (solo admin).\n"
@@ -461,6 +483,7 @@ async def start_handler(event):
     if es_admin:
         await send_admin_menu(user_id)
     else:
+        # Para usuarios normales, el inicio también puede mostrar el menú de remesas
         await send_user_menu(user_id)
 
 @client.on(events.NewMessage(pattern='/user'))
@@ -476,7 +499,10 @@ async def user_handler(event):
         ]
         await event.respond("Selecciona una acción:", buttons=botones)
     else:
-        botones = [[Button.inline("✨ Solicitar crear usuario", data="createuser")]]
+        # Usuario normal solo puede solicitar creación
+        botones = [
+            [Button.inline("✨ Solicitar crear usuario", data="createuser")]
+        ]
         await event.respond("Para crear una cuenta, solicita al administrador:", buttons=botones)
 
 @client.on(events.NewMessage(pattern='/remesas'))
@@ -530,6 +556,18 @@ async def callback_handler(event):
             await event.answer(text, alert=alert)
         except Exception as e:
             logging.warning(f"Error al responder callback: {e}")
+
+    async def finalizar_accion_admin(mensaje=None):
+        """Envía el menú de administrador después de una acción."""
+        if mensaje:
+            await event.reply(mensaje)
+        await send_admin_menu(user_id)
+
+    async def finalizar_accion_user(mensaje=None):
+        """Envía el menú de usuario después de una acción."""
+        if mensaje:
+            await event.reply(mensaje)
+        await send_user_menu(user_id)
 
     # ---------- Selección de cuenta para crear remesa ----------
     if data.startswith("select_account_"):
@@ -602,11 +640,11 @@ async def callback_handler(event):
         try:
             await client.send_message(ADMIN_CHAT_ID, admin_msg, buttons=botones_admin, parse_mode='markdown')
             await event.edit("✅ Solicitud de retiro enviada. Espera confirmación del administrador.")
+            await finalizar_accion_user("✅ Solicitud enviada. Recibirás respuesta en breve.")
         except Exception as e:
             logging.error(f"Error al enviar mensaje al administrador: {e}")
             await safe_answer("❌ No se pudo enviar la solicitud al administrador.", alert=True)
         del user_states[user_id]
-        await send_user_menu(user_id)
         return
 
     # ---------- Retiro total ----------
@@ -640,11 +678,11 @@ async def callback_handler(event):
         try:
             await client.send_message(ADMIN_CHAT_ID, admin_msg, buttons=botones_admin, parse_mode='markdown')
             await event.edit("✅ Solicitud de retiro total enviada. Espera confirmación.")
+            await finalizar_accion_user("✅ Solicitud enviada. Recibirás respuesta en breve.")
         except Exception as e:
             logging.error(f"Error al enviar mensaje al administrador: {e}")
             await safe_answer("❌ No se pudo enviar la solicitud al administrador.", alert=True)
         del user_states[user_id]
-        await send_user_menu(user_id)
         return
 
     # ---------- Aprobación / rechazo de retiros ----------
@@ -669,6 +707,7 @@ async def callback_handler(event):
         await event.edit(f"✅ Retiro aprobado para el usuario {user_id_solicitante} por {amount}.\nResultado: {mensaje}")
         await safe_answer("Retiro aprobado.")
         del user_states[f"pending_{solicitud_id}"]
+        # Después de aprobar, volver al menú admin
         await send_admin_menu(user_id)
         return
 
@@ -814,6 +853,7 @@ async def callback_handler(event):
                 mensaje += (f"**{u.get('name')}** - Telegram ID: `{u.get('idUserTelegram')}` - "
                             f"Porcentaje: {per_cent_str}%\nUUID: `{u.get('id')}`\n\n")
             await event.edit(mensaje)
+            # No salir del menú de usuarios, permitir seguir
         else:
             usuario = await obtener_usuario_por_telegram_id(user_id)
             if not usuario:
@@ -823,6 +863,7 @@ async def callback_handler(event):
             per_cent_str = f"{per_cent:.2f}".rstrip('0').rstrip('.') if isinstance(per_cent, float) else str(per_cent)
             mensaje = f"👤 **Tus datos:**\nNombre: {usuario.get('name')}\nTelegram ID: `{usuario.get('idUserTelegram')}`\nPorcentaje: {per_cent_str}%\nUUID: `{usuario.get('id')}`"
             await event.edit(mensaje)
+        # Después de ver, devolver al menú anterior (podría ser el mismo de usuario)
         await send_user_menu(user_id)
         return
 
@@ -881,17 +922,10 @@ async def callback_handler(event):
              Button.inline("📅 7 días", data="history_7d")],
             [Button.inline("📅 30 días", data="history_30d"),
              Button.inline("📅 60 días", data="history_60d")],
-            [Button.inline("🔙 Volver", data="history_back"),
-             Button.inline("🏠 Volver al menú principal", data="user_back_to_main")]
+            [Button.inline("🔙 Volver", data="history_back")]
         ]
         await event.edit("📆 **Selecciona el período para ver tus remesas:**", buttons=botones_filtros)
         await safe_answer("Elige un filtro de fecha.")
-        return
-
-    if data == "user_back_to_main":
-        await send_user_menu(user_id)
-        await event.delete()
-        await safe_answer("Volviendo al menú principal.")
         return
 
     if data.startswith("history_"):
@@ -946,10 +980,7 @@ async def callback_handler(event):
         if len(filtered) > 20:
             mensaje += "_Mostrando solo las primeras 20 remesas._"
 
-        botones_volver = [
-            [Button.inline("🔙 Volver a filtros", data="user_view_remesas")],
-            [Button.inline("🏠 Volver al menú principal", data="user_back_to_main")]
-        ]
+        botones_volver = [[Button.inline("🔙 Volver a filtros", data="user_view_remesas")]]
         await client.send_message(user_id, mensaje, buttons=botones_volver)
         await event.delete()
         await safe_answer("Resultados enviados.")
@@ -1017,13 +1048,14 @@ async def callback_handler(event):
              Button.inline("📅 60 días", data="admin_history_60d")],
             [Button.inline("🔙 Volver al menú", data="admin_history_back")]
         ]
-        await event.edit("📆 **Selecciona el período para ver el historial de remesas:**", buttons=botones_filtros)
+        await event.edit("📆 **Selecciona el período para ver el historial de remesas de todos los usuarios:**", buttons=botones_filtros)
         await safe_answer("Elige un filtro de fecha.")
         return
 
     if data.startswith("admin_history_"):
         filtro = data.replace("admin_history_", "")
         if filtro == "back":
+            # Volver al menú de admin de remesas
             botones = [
                 [Button.inline("➕ Crear remesa", data="admin_create_remesa"),
                  Button.inline("✏️ Actualizar remesa", data="admin_update_remesa")],
@@ -1039,51 +1071,6 @@ async def callback_handler(event):
             await safe_answer("⛔ No eres administrador.", alert=True)
             return
 
-        # Guardar el filtro seleccionado
-        user_states[user_id] = {"admin_selected_filter": filtro}
-        # Eliminar mensaje de filtros
-        await event.delete()
-        # Obtener usuarios
-        usuarios = await listar_usuarios()
-        if not usuarios:
-            await client.send_message(
-                user_id,
-                "❌ No hay usuarios registrados o no se pudo obtener la lista.\n\nUsa /user para crear un usuario.",
-                buttons=[[Button.inline("🔙 Volver al menú", data="admin_back_to_menu")]]
-            )
-            await safe_answer("Error: lista de usuarios vacía.")
-            return
-
-        # Construir botones de usuarios
-        botones_usuarios = []
-        for u in usuarios[:20]:
-            nombre = u.get("name", "Sin nombre")
-            uid = u.get("id")
-            botones_usuarios.append([Button.inline(f"👤 {nombre}", data=f"admin_history_user_{uid}")])
-        # Botón para volver a filtros
-        botones_usuarios.append([Button.inline("🔙 Volver a filtros", data="admin_view_remesas")])
-
-        await client.send_message(
-            user_id,
-            f"📌 **Selecciona un usuario para ver sus remesas en el período: {filtro.upper()}**",
-            buttons=botones_usuarios
-        )
-        await safe_answer("Selecciona un usuario.")
-        return
-
-    if data.startswith("admin_history_user_"):
-        user_uuid = data.replace("admin_history_user_", "")
-        es_admin, _ = await verificar_admin(user_id)
-        if not es_admin:
-            await safe_answer("⛔ No eres administrador.", alert=True)
-            return
-        state = user_states.get(user_id, {})
-        filtro = state.get("admin_selected_filter")
-        if not filtro:
-            await safe_answer("❌ No se ha seleccionado un filtro de fecha. Vuelve a empezar.", alert=True)
-            await client.send_message(user_id, "Por favor, selecciona un período desde /remesas -> Ver remesas.")
-            return
-
         now = datetime.now(timezone.utc)
         if filtro == "today":
             start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -1097,56 +1084,53 @@ async def callback_handler(event):
             await safe_answer("Filtro no válido.", alert=True)
             return
 
-        history = await listar_history_remittances(user_uuid)
-        if history is None:
-            await client.send_message(
-                user_id,
-                "❌ Error al obtener el historial de remesas para este usuario.",
-                buttons=[[Button.inline("🔙 Volver a selección de usuario", data="admin_view_remesas")]]
-            )
+        usuarios = await listar_usuarios()
+        if not usuarios:
+            await event.edit("❌ No se pudo obtener la lista de usuarios.")
             return
 
-        filtered = []
-        for h in history:
-            created_at = datetime.fromisoformat(h["createdAt"].replace("Z", "+00:00"))
-            if created_at >= start_date:
-                filtered.append(h)
-
-        if not filtered:
-            await client.send_message(
-                user_id,
-                f"📭 No hay remesas para este usuario en el período seleccionado ({filtro}).",
-                buttons=[[Button.inline("🔙 Volver a selección de usuario", data="admin_view_remesas")]]
-            )
-            await event.delete()
+        all_remittances = []
+        for user_data in usuarios:
+            user_uuid = user_data.get("id")
+            user_name = user_data.get("name", "Usuario")
+            if not user_uuid:
+                continue
+            history = await listar_history_remittances(user_uuid)
+            if not history:
+                continue
+            for h in history:
+                created_at = datetime.fromisoformat(h["createdAt"].replace("Z", "+00:00"))
+                if created_at >= start_date:
+                    all_remittances.append({
+                        "user_name": user_name,
+                        "customer": h.get("customer", "?"),
+                        "amount": h.get("amount"),
+                        "account": h.get("account", "?"),
+                        "amountPay": h.get("amountPay"),
+                        "createdAt": h.get("createdAt")
+                    })
+        if not all_remittances:
+            await event.edit(f"📭 No hay remesas en el período seleccionado ({filtro}).")
             return
 
-        filtered.sort(key=lambda x: x["createdAt"], reverse=True)
-        mensaje = f"📊 **Remesas del usuario - {filtro.upper()}**\n\n"
-        for idx, h in enumerate(filtered[:30], 1):
+        all_remittances.sort(key=lambda x: x["createdAt"], reverse=True)
+        mensaje = f"📊 **Remesas de todos los usuarios - {filtro.upper()}**\n\n"
+        for idx, r in enumerate(all_remittances[:30], 1):
             mensaje += (
-                f"**{idx}.** Cliente: {h.get('customer', '?')}\n"
-                f"   Monto: {h.get('amount')}\n"
-                f"   Cuenta: {h.get('account', '?')}\n"
-                f"   Salario: {h.get('amountPay')}\n"
-                f"   Fecha: {h.get('createdAt')[:10]}\n\n"
+                f"**{idx}.** Usuario: {r['user_name']}\n"
+                f"   Cliente: {r['customer']}\n"
+                f"   Monto: {r['amount']}\n"
+                f"   Cuenta: {r['account']}\n"
+                f"   Salario: {r['amountPay']}\n"
+                f"   Fecha: {r['createdAt'][:10]}\n\n"
             )
-        if len(filtered) > 30:
+        if len(all_remittances) > 30:
             mensaje += "_Mostrando solo las primeras 30 remesas._"
 
-        botones_volver = [
-            [Button.inline("🔙 Volver a selección de usuario", data="admin_view_remesas")],
-            [Button.inline("🏠 Volver al menú principal", data="admin_back_to_menu")]
-        ]
+        botones_volver = [[Button.inline("🔙 Volver a filtros", data="admin_view_remesas")]]
         await client.send_message(user_id, mensaje, buttons=botones_volver)
         await event.delete()
         await safe_answer("Resultados enviados.")
-        return
-
-    if data == "admin_back_to_menu":
-        await send_admin_menu(user_id)
-        await event.delete()
-        await safe_answer("Volviendo al menú principal.")
         return
 
     if data == "admin_view_salary":
@@ -1235,6 +1219,7 @@ async def callback_handler(event):
         await safe_answer("Remesas pendientes mostradas.")
         return
 
+    # ---------- CONFIRMAR REMESA ----------
     if data.startswith("confirm_update_remesa_"):
         remesa_id = data.replace("confirm_update_remesa_", "")
         es_admin, admin_uuid = await verificar_admin(user_id)
@@ -1312,6 +1297,7 @@ async def callback_handler(event):
 
         await event.edit(mensaje)
         await safe_answer("Remesa actualizada.", alert=True)
+        # Volver al menú admin
         await send_admin_menu(user_id)
         return
 
@@ -1428,6 +1414,7 @@ async def callback_handler(event):
             return
         await mostrar_cuentas(event, cuentas, titulo="🏦 **Lista de cuentas:**")
         await event.delete()
+        # Después de ver cuentas, volver al menú admin
         await send_admin_menu(user_id)
         return
 
@@ -1664,8 +1651,9 @@ async def conversation_handler(event):
             await send_user_menu(user_id)
             return
 
-    # Retiro parcial (flujo iniciado por usuario) – ya manejado en callbacks
+    # Retiro parcial (flujo iniciado por usuario)
     elif action == "withdraw_partial":
+        # Este flujo ya está manejado en los callbacks, no debería llegar aquí
         pass
 
     # Crear cuenta (admin)
@@ -1698,12 +1686,13 @@ async def conversation_handler(event):
             return
 
 # --------------------------------------------------------------
-# Tarea en segundo plano: reporte diario a las 20:00 Cuba (UTC 0)
+# Tarea en segundo plano: reporte diario a las 20:00
 # --------------------------------------------------------------
 async def daily_report_task():
+    """Cada día a las 20:00, obtiene todos los usuarios, sus remesas del día actual y envía un resumen."""
     while True:
         now = datetime.now(timezone.utc)
-        target_hour = 0  # 20:00 Cuba = 00:00 UTC
+        target_hour = 20
         target_minute = 0
         target_second = 0
         next_run = now.replace(hour=target_hour, minute=target_minute, second=target_second, microsecond=0)
