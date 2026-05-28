@@ -17,7 +17,7 @@ BOT_TOKEN = os.getenv('BOT_TOKEN')
 
 client = TelegramClient('bot_session', API_ID, API_HASH)
 
-ADMIN_CHAT_ID = 1425847313  # Cambia por el ID real del admin
+ADMIN_CHAT_ID = 1042242673  # Cambia por el ID real del admin
 
 user_states = {}
 FILES_DIR = Path("files")
